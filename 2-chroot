@@ -1,0 +1,179 @@
+#!/bin/bash
+
+function change_root_passwd() {
+	# TODO: Double check the password before set it up for the root 
+	read -resp  $'[\e[1;33mACTION\e[0m] - Set the new PASSWORD for root: ' ROOT_PASSWD | tee -a $LOG
+	echo root:${ROOT_PASSWD} | chpasswd | tee -a $LOG
+	echo -e "$OK - The root password has been changed." | tee -a $LOG
+}
+
+function setup_timezone() {
+	echo -e "$NOTE - Setting up the time zone" | tee -a $LOG
+	read -p "What's your time zone? (e.g. Europe/london) "  timezone  | tee -a $LOG
+	# timezone=$(timedatectl list-timezones | fzf --reverse --header="Choose your Time Zone:" --header-first --height 30%)
+	ln -sf /usr/share/zoneinfo/$timezone /etc/localtime | tee -a $LOG
+	hwclock --systohc
+	echo -e "$OK - Your time zone has been set to $timezone." | tee -a $LOG
+}
+
+function setup_locales() {
+	read -n1 -rep  $'[\e[1;33mACTION\e[0m] - Do you want to change the keyboard layout? (y/n) ' CHANGE_KBD | tee -a $LOG
+	if [[ ${CHANGE_KBD} =~ ^[Yy]$ ]]; then
+		echo -e "$NOTE - Now setting up the locales..." | tee -a $LOG
+		sed -i '/#en_US.UTF-8 UTF-8/s/^#en/en/' /etc/locale.gen | tee -a $LOG
+		locale-gen >> $LOG
+		echo 'LANG=en_US.UTF-8' > /etc/locale.conf | tee -a $LOG
+		echo -e "$NOTE - The locales have been generate successfully." | tee -a $LOG
+	fi
+}
+
+function setup_keyboard() {
+	echo -e "$NOTE - Setting up the keyboard layout..." | tee -a $LOG
+	kbd_layout=$(ls /usr/share/kbd/keymaps/i386/qwerty | fzf --reverse --header="Select a Keyboard layout for tty:" --header-first)
+	loadkeys /usr/share/kbd/keymaps/i386/qwerty/${kbd_layout} | tee -a $LOG
+	echo -e "$OK - The keyboard layout has been set to ${m}$(echo ${kbd_layout} | cut -d. -f1)${w}" | tee -a $LOG
+}
+
+
+function install_pkg() {
+	if pacman -Qs "${1}" >> /dev/null; then
+		echo -e "$OK - ${1} is already installed." | tee -a $LOG
+		sleep .5
+	else
+		echo -ne "$NOTE - Now Installing ${1}..." | tee -a $LOG
+		pacman --noconfirm -S "${1}" 2>&1 >> $LOG
+		if pacman -Qs "${1}" >> /dev/null; then
+			sleep 1
+			echo -e "\r$OK - ${1} was installed." | tee -a $LOG
+		else
+			echo -e "\r$ERROR - ${1} installation has failed, please check the install.log for more details." | tee -a $LOG
+			exit 1
+		fi
+	fi
+}
+
+function install_additional_pkgs() {
+	additional_pkgs=(
+		networkmanager
+		bluez
+		bluez-utils
+		netctl
+		wireless_tools
+    wpa_supplicant
+		dhcp
+    dhcpcd
+    dialog
+	)
+	 
+	echo -e "$NOTE - Now installing some additional packages...\n"
+  for pkg in ${additional_pkgs[@]}
+  do
+  	install_pkg "${pkg}"
+  done
+}
+
+
+	
+function setup_hostname() {
+	read -rep $'[\e[1;33mACTION\e[0m] - Hostname: ' HOSTNAME | tee -a $LOG
+	echo $HOSTNAME > /etc/hostname | tee -a $LOG
+}
+
+function setup_hosts() {	
+	cat << EOF > /etc/hosts
+127.0.0.1		localhost
+::1 			localhost
+127.0.1.1		${HOSTNAME}.localdomain		$HOSTNAME
+EOF
+}
+
+function setup_bootLoader() {
+	grub_packages=(
+		grub
+		mtools
+		dosfstools
+		efibootmgr
+	)
+
+	echo -e "$NOTE - Now installing packages for grub..." | tee -a $LOG
+	for pkg in ${grub_packages[@]}
+	do
+		install_pkg	"${pkg}"
+	done
+
+	echo -e "$NOTE - Now installing grub as bootloader..." | tee -a $LOG
+	grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB --recheck | tee -a $LOG
+	echo -e "\r$OK - grub has been installed." | tee -a $LOG
+	echo -e "$NOTE - Now generating the grub config file..." | tee -a $LOG
+	grub-mkconfig -o /boot/grub/grub.cfg | tee -a $LOG
+	echo -e "$OK - The grub config file has been generate." | tee -a $LOG
+}
+
+function setup_superUser() {
+	read -n1 -rep  $'[\e[1;33mACTION\e[0m] - Do you want to create a super user with sudo privillegies? (y/n) ' SUPERUSER
+	if [[ ${SUPERUSER} =~ ^[Yy]$ ]];then
+		read -rep  $'[\e[1;33mACTION\e[0m] - USERNAME: ' USERNAME
+		read -resp $'[\e[1;33mACTION\e[0m] - PASSWORD: ' PASSWORD
+		echo -ne "$NOTE - Now creating the user with sudo privillegies..." | tee -a $LOG
+		useradd -m -G wheel,storage,power "$USERNAME" | tee -a $LOG
+		echo ${USERNAME}:${PASSWORD} | chpasswd | tee -a $LOG
+		sed -i '/# %wheel ALL=(ALL:ALL) ALL/s/^# //' /etc/sudoers | tee -a $LOG
+		echo -e "\r$OK - The user ${USERNAME} has been create successfully." | tee -a $LOG
+	fi
+}
+
+function enabling_services() {
+	systemctl enable NetworkManager
+	# systemctl enable bluetooth
+	systemctl enable dhcpcd
+	systemctl enable sshd
+}
+
+function setup_after_reboot_script() {
+	echo -ne "Copying the last part of the script '${g}3-after-reboot${w}' to ${m}/home/${USERNAME}${w}..."
+	cp '3-after-reboot' /home/${USERNAME}/ || echo "$WARNING - Fail the copy the script to your home directory"
+	sleep 1
+	echo -e "\r$OK - The last part of the script '${g}3-after-reboot${w}' has been copied to ${m}/home${USERNAME}${w}."
+	sleep 1
+	echo -e "[${y}IMPORTANT${w}] - Now reboot your machine then after reboot execute the command below:"
+	sleep 1
+	echo -e "'${g}./3-after-reboot${w}' ==> execute the last part of the script"
+}
+
+function color_variables() {
+	r="\e[0;31m\033[1m"
+	b="\e[0;34m\033[1m"
+	g="\e[0;36m\033[1m"
+	m="\e[0;35m\033[1m"
+	y="\e[0;33m"
+	w="\e[0;37m"
+}
+
+function indicator_variables() {
+	NOTE="[\e[1;36mNOTE\e[0m]"
+	ATTENTION="[\e[1;37mATTENTION\e[0m]"
+	WARNING="[\e[1;35mWARNING\e[0m]"
+	OK="[\e[1;32mOK\e[0m]"
+	ERROR="[\e[1;31mERROR\e[0m]"
+	ACTION="[\e[1;33mACTION\e[0m]"
+	LOG="install.log"
+}
+
+main() {
+	color_variables
+	indicator_variables
+	
+	# exit on error
+	set -e
+	  
+	install_additional_pkgs
+	change_root_passwd
+	setup_timezone
+	setup_locales
+	setup_bootLoader
+	setup_superUser
+	enabling_services
+	setup_after_reboot_script
+}
+
+main

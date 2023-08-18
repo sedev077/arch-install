@@ -1,0 +1,226 @@
+#!/bin/bash
+
+function install_aur_helper() {
+	ISAUR=$(command -v yay || command -v paru || command -v pikaur)
+
+	if [ -z ${ISAUR} ]; then
+		while true; do
+			read -n1 -rep $'\n[\e[1;33mACTION\e[0m] - Which AUR helper do you want to use, yay, paru or pikaur? Enter 'y', 'p' or 'k': ' choice
+	    case "$choice" in
+	        y|Y)
+	            printf "\n%s - Installing yay from AUR\n" "${NOTE}"
+	            git clone https://aur.archlinux.org/yay-bin.git || { printf "%s - Failed to clone yay from AUR\n" "${ERROR}"; exit 1; }
+	            cd yay-bin || { printf "%s - Failed to enter yay-bin directory\n" "${ERROR}"; exit 1; }
+	            makepkg -si --noconfirm 2>&1 | tee -a "$LOG" || { printf "%s - Failed to install yay from AUR\n" "${ERROR}"; exit 1; }
+	            cd ..
+	            break
+	            ;;
+	        p|P)
+	            printf "\n%s - Installing paru from AUR\n" "${NOTE}"
+	            git clone https://aur.archlinux.org/paru-bin.git || { printf "%s - Failed to clone paru from AUR\n" "${ERROR}"; exit 1; }
+	            cd paru-bin || { printf "%s - Failed to enter paru-bin directory\n" "${ERROR}"; exit 1; }
+	            makepkg -si --noconfirm 2>&1 | tee -a "$LOG" || { printf "%s - Failed to install paru from AUR\n" "${ERROR}"; exit 1; }
+	            cd ..
+	            break
+	            ;;
+
+		pk|Pk|PK)
+	            printf "\n%s - Installing pikaur from AUR\n" "${NOTE}"
+	            git clone https://aur.archlinux.org/pikaur.git || { printf "%s - Failed to clone pikaur from AUR\n" "${ERROR}"; exit 1; }
+	            cd pikaur || { printf "%s - Failed to enter pikaur directory\n" "${ERROR}"; exit 1; }
+	            makepkg -si --noconfirm 2>&1 | tee -a "$LOG" || { printf "%s - Failed to install pikaur from AUR\n" "${ERROR}"; exit 1; }
+	            cd ..
+	            break
+	            ;;
+	        *)
+	            echo -e "${ERROR} - Invalid choice. Please enter 'y' for yay, 'p' for paru or 'k' for pikaur\n"
+							continue            
+							;;	
+	  	esac
+		done
+	fi
+
+
+	ISAUR=$(command -v yay || command -v paru || command -v pikaur)
+	echo "Your AUR helper is none other than the greatest ${ISAUR} " | tee -a $LOG
+	$ISAUR -Syu --noconfirm	 2>&1 | tee -a $LOG
+}
+
+function install_pkg() {
+	if $ISAUR -Qs "${1}" >> /dev/null; then
+		echo -e "$OK - ${1} is already installed." | tee -a $LOG
+		sleep 1
+	else
+		echo -ne "$NOTE - Now Installing ${1}..." | tee -a $LOG
+		$ISAUR --noconfirm -S "${1}" 2>&1 >> $LOG
+		if $ISAUR -Qs "${1}" >> /dev/null; then
+			sleep 1
+			echo -e "\r$OK - ${1} was installed." | tee -a $LOG
+		else
+			echo -e "\r$ERROR - ${1} installation has failed, please check the install.log for more details." | tee -a $LOG
+			exit 1
+		fi
+	fi
+}
+
+function setup_hostname() {
+	read -rep $'[\e[1;33mACTION\e[0m] - Hostname: ' HOSTNAME | tee -a $LOG
+	echo $HOSTNAME > /etc/hostname | tee -a $LOG
+}
+
+function setup_hosts() {	
+	cat << EOF > /etc/hosts
+127.0.0.1		localhost
+::1 			localhost
+127.0.1.1		${HOSTNAME}.localdomain		$HOSTNAME
+EOF
+}
+
+function install_extra_pkgs() {
+	additional_pkgs=(
+		android-tools
+		aria2
+		aria2p
+		bat
+		bluez
+		bluez-utils
+		btop
+		cheat-bin
+		cowsay
+		dhcp
+		dhcpcd
+		dialog
+		dust
+		exa
+		ffmpeg
+		ffmpegthumbs
+		figlet
+		figlet-fonts
+		firefox
+		google-chrome
+		gvfs
+		gvfs-mtp
+		htop
+		imagemagick
+		intel-ucode
+		journal
+		jq
+		kitty
+		lsd
+		lshw
+		man-db
+		micro
+		mpv
+		neofetch
+		netctl
+		networkmanager
+		nodejs
+		npm
+		ntfs-3g
+		ntfs-automount
+		pv
+		python-pip
+		python-requests
+		ranger
+		rate-mirrors
+		scrcpy
+		screenfetch
+		simple-mtpfs
+		starship
+		sxhkd
+		sxiv
+		testdisk
+		timeshift
+		usbutils
+		vim
+		webtorrent-cli
+		wget
+		wireless_tools
+		wpa_supplicant
+		xclip
+		yt-dlp
+	)
+
+	echo -e "$NOTE - Now installing some additional packages...\n"
+	for pkg in ${additional_pkgs[@]}
+	do
+		install_pkg "${pkg}"
+	done
+}
+
+function install_fonts() {
+	fonts=(
+		hack-font-ligature-nerd-font-git
+		nerd-fonts-fira-code
+		nerd-fonts-hack
+		nerd-fonts-jetbrains-mono
+		otf-font-awesome
+		otf-font-awesome-4
+		terminus-font
+		ttf-droid
+		ttf-fira-code
+		ttf-fantasque-sans-mono
+		ttf-hack
+		ttf-jetbrains-mono
+		ttf-jetbrains-mono-nerd
+		ttf-joypixels
+		ttf-material-design-icons
+		ttf-roboto
+		ttf-roboto-mono
+		ttf-roboto-mono-nerd
+		ttf-symbola
+		ttf-terminus-nerd
+	)
+
+	echo -e "$NOTE - Now installing some fonts..."
+	for font in ${fonts[@]}
+	do
+		install_pkg "${font}"
+	done
+	echo -e "refreching the font cache..."
+	fc-cache -f -v >> $LOG
+}
+
+function install_audio() {
+	audio_pkgs=(
+		pamixer
+		pavucontrol
+		pipewire
+		pipewire-alsa
+		pipewire-pulse
+		wireplumber
+	)
+	echo -e "$NOTE - Now installing audio packages..."
+	for audio_pkg in ${audio_pkgs[@]}
+	do
+		install_pkg "${audio_pkg}"
+	done
+}
+
+
+main(){
+	# exit on error
+	# set -e
+	# colors
+	r="\e[0;31m\033[1m"
+	b="\e[0;34m\033[1m"
+	g="\e[0;36m\033[1m"
+	m="\e[0;35m\033[1m"
+	y="\e[0;33m"
+	w="\e[0;37m"
+	
+	NOTE="[\e[1;36mNOTE\e[0m]"
+	ATTENTION="[\e[1;37mATTENTION\e[0m]"
+	WARNING="[\e[1;35mWARNING\e[0m]"
+	OK="[\e[1;32mOK\e[0m]"
+	ERROR="[\e[1;31mERROR\e[0m]"
+	ACTION="[\e[1;33mACTION\e[0m]"
+	LOG="install.log"
+
+	install_aur_helper	
+	install_extraPackages
+	install_fonts
+	install_audio
+}
+
+main
