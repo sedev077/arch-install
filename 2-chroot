@@ -10,7 +10,7 @@ function change_root_passwd() {
 function setup_timezone() {
 	echo -e "$NOTE - Setting up the time zone" | tee -a $LOG
 	read -p "What's your time zone? (e.g. Europe/london) "  timezone  | tee -a $LOG
-	# timezone=$(timedatectl list-timezones | fzf --reverse --header="Choose your Time Zone:" --header-first --height 30%)
+	timezone=$(timedatectl list-timezones | fzf --reverse --header="Choose your Time Zone:" --header-first --height 30%)
 	ln -sf /usr/share/zoneinfo/$timezone /etc/localtime | tee -a $LOG
 	hwclock --systohc
 	echo -e "$OK - Your time zone has been set to $timezone." | tee -a $LOG
@@ -102,7 +102,7 @@ function setup_bootLoader() {
 	done
 
 	echo -e "$NOTE - Now installing grub as bootloader..." | tee -a $LOG
-	grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB --recheck | tee -a $LOG
+	grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=grub | tee -a $LOG
 	echo -e "\r$OK - grub has been installed." | tee -a $LOG
 	echo -e "$NOTE - Now generating the grub config file..." | tee -a $LOG
 	grub-mkconfig -o /boot/grub/grub.cfg | tee -a $LOG
@@ -124,14 +124,14 @@ function setup_superUser() {
 
 function enabling_services() {
 	systemctl enable NetworkManager
-	# systemctl enable bluetooth
+	systemctl enable bluetooth
 	systemctl enable dhcpcd
 	systemctl enable sshd
 }
 
 function setup_after_reboot_script() {
 	echo -ne "Copying the last part of the script '${g}3-after-reboot${w}' to ${m}/home/${USERNAME}${w}..."
-	cp '3-after-reboot' /home/${USERNAME}/ || echo "$WARNING - Fail the copy the script to your home directory"
+	mv '/root/3-after-reboot' /home/${USERNAME}/ || echo "$WARNING - Fail the copy the script to your home directory"
 	sleep 1
 	echo -e "\r$OK - The last part of the script '${g}3-after-reboot${w}' has been copied to ${m}/home${USERNAME}${w}."
 	sleep 1
@@ -170,8 +170,11 @@ main() {
 	change_root_passwd
 	setup_timezone
 	setup_locales
+	setup_hostname
+	setup_hosts
 	setup_bootLoader
 	setup_superUser
+	install_additional_pkgs
 	enabling_services
 	setup_after_reboot_script
 }

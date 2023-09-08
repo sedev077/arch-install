@@ -1,16 +1,185 @@
 #!/bin/sh
 
+# TODO Filter the already selected partitions from the list of choices for the next parttiton  
 #  TODO: TIPS -> If the installation fail at a certain point, 1: inside the arch-install, run vim install.log
 # 2: check what's the last step done by the script beffore failing.
 # 3: if the script stop at installing base packages, run {rm -rf /var/lib/pacman/db.lck && pac --init && --populate} 
 
-# TODO: resume install script that gonna be able to check the log and see where to script stop and start from the last part of the previous execution
+# TODO: resume install script that gonna be able to check the log and see where to script stop and start from the last part of the previous execution#!/bin/bash
 
+# List available disks
+function list_disks(){
+  # lsblk -o PATH,FSTYPE,SIZE,TYPE,MOUNTPOINT | grep -e "part" | fzf 
+  lsblk -o PATH,FSTYPE,SIZE,TYPE,MOUNTPOINT | grep -e "part" | fzf --reverse --color=16 --header "Select your ${1} partition: " --header-first --height 40% --border
+}
 
-function list_disks() {
-	lsblk -o "PATH,FSTYPE,UUID,LABEL,SIZE,TYPE,MOUNTPOINT" -An \
-	| grep part \
-	| fzf --reverse --ansi --header "Choose your \n[\e[1;33m${1}\e[0m partition:" --header-first --height 30%
+# Get root and boot partitions
+function get_partitions(){
+	trap "exit" SIGINT SIGTERM
+	while true
+	do
+	  # Get partition choices
+		# echo -e "Select your \e[0;31mRoot\e[0m partition: \n"
+		# sleep 2
+	  ROOT_PART=$(list_disks "ROOT"| cut -d\  -f1)  
+		# echo "$ROOT_PART"
+		# read -n1 -p "Enter to conitnue "
+	  # Validate selections
+	  if [ ! -b "$ROOT_PART" ]; then
+			if [[ $ATTEMPTS -gt 1 ]]; then
+				echo -ne "\r$CHECK_PART"
+				sleep 1
+				((ATTEMPTS++))
+				continue
+			else
+				echo -ne "\r$INVALID_PART"
+				sleep 1
+				((ATTEMPTS++))
+				continue
+			fi
+	  else
+			# reset the number of attempts 
+			ATTEMPTS=0
+			clear
+	  	break  
+		fi
+	done
+	
+	while true
+	do	
+		sleep .5
+	  BOOT_PART=$(list_disks "BOOT"| cut -d\  -f1)
+	  if [ ! -b "$BOOT_PART" ]; then
+			if [[ $ATTEMPTS -gt 1 ]];then
+				echo -ne "\r$CHECK_PART"
+				sleep 1
+				((ATTEMPTS++))
+				continue
+			else
+				echo -ne "\r$INVALID_PART"
+				sleep 1
+				((ATTEMPTS++))
+				continue
+			fi
+	  else
+			ATTEMPTS=0
+			clear
+	  	break  
+		fi
+	done
+}
+
+# Ask about optional partitions
+function get_optional_partitions(){
+	read -p "Separate home partition? (y/N) " separate_home_part
+  if [[ "${separate_home_part}" =~ ^[Yy]$ ]]; then
+		while true
+		do
+			HOME_PART=$(list_disks "HOME"| cut -d\  -f1)
+		  if [ ! -b "$HOME_PART" ]; then
+				if [[ $ATTEMPTS -gt 1 ]];then
+					echo -ne "\r$CHECK_PART"
+					sleep 1
+					((ATTEMPTS++))
+					continue
+				else
+					echo -ne "\r$INVALID_PART"
+					sleep 1
+					((ATTEMPTS++))
+					continue
+				fi
+		  else
+				ATTEMPTS=0
+		  	break  
+			fi
+		done
+	fi
+
+	read -p "Separate SWAP partition? (y/N) " separate_swap_part
+  if [[ "${separate_swap_part}" =~ ^[Yy]$ ]]; then
+		while true
+		do
+			SWAP_PART=$(list_disks "SWAP"| cut -d\  -f1)
+		  if [ ! -b "$SWAP_PART" ]; then
+				if [[ $ATTEMPTS -gt 1 ]];then
+					echo -ne "\r$CHECK_PART"
+					sleep 1
+					((ATTEMPTS++))
+					continue
+				else
+					echo -ne "\r$INVALID_PART"
+					sleep 1
+					((ATTEMPTS++))
+					continue
+				fi
+		  else
+				ATTEMPTS=0
+		  	break  
+			fi
+		done
+	fi
+}
+
+function debug_get_partitions() {
+	printf "Root: %s\n" $ROOT_PART
+	printf "Boot: %s\n" $BOOT_PART
+	[[ "$separate_home_part" =~ ^[Yy]$ ]] && printf "Home: %s\n" $HOME_PART	
+	[[ "$separate_swap_part" =~ ^[Yy]$ ]] && printf "Swap: %s\n" $SWAP_PART		
+}
+
+function ask_formating() {
+	read -p "Do you want to wipe the ROOT partition? (y/N) " format_root_part
+	read -p "Do you want to wipe the BOOT partition? (y/N) " format_boot_part
+	[[ "$separate_home_part" =~ ^[Yy]$ ]] && {
+		read -p "Do you want to wipe the HOME partition? (y/N) " format_home_part
+	}
+}
+
+function format_partitions() {
+	ask_formating
+	
+	if [[ "$format_root_part" =~ ^[Yy]$ ]]; then
+		echo -e "$NOTE - Now formating $ROOT_PART as ext4"
+		mkfs.ext4 ${ROOT_PART}
+	fi
+
+	if [[ "$format_boot_part" =~ ^[Yy]$ ]]; then
+		echo -e "$NOTE - Now formating $BOOT_PART as fat32"
+		mkfs.fat -F32 ${BOOT_PART}
+	fi
+
+	[[ "$separate_home_part" =~ ^[Yy]$ ]] && { 		
+		if [[ "$format_home_part" =~ ^[Yy]$ ]]; then
+			echo -e "$NOTE - Now formating $HOME_PART as ext4"
+			mkfs.ext4 ${HOME_PART}
+		fi
+	}
+	
+	[[ "$separate_swap_part" =~ ^[Yy]$ ]] && { 		
+		echo -e "$NOTE - Now formating $SWAP_PART as swap"
+		mkswap ${SWAP_PART}
+		swapon ${SWAP_PART}
+	}
+}
+
+function mount_partitions() {
+	printf "Now mounting partitions...\n"
+	mount $ROOT_PART /mnt
+	mount --mkdir $BOOT_PART /mnt/boot/efi
+	[[ "$separate_home_part" ^[Yy]$ ]] && mount --mkdir $HOME_PART /mnt/home
+}
+
+function setup_partitions(){
+	format_partitions
+	mount_partitions  
+}
+
+# Orchestrate partitions
+function manage_partitions(){
+  get_partitions
+  get_optional_partitions
+	# debug_get_partitions
+  setup_partitions 
 }
 
 
@@ -21,79 +190,6 @@ function on_error() {
  	fi
 }
 
-function get_partitions() {
-		# Home and swap with OPTIONAL Flag 
-	ROOT_PART=$(list_disks "root")
-	BOOT_PART=$(list_disks "boot")
-			
-}
-
-function format_partitions() {
-	echo	
-}
-
-function mount_partitions() {
-	echo
-}
-
-function disk_manager() {
-	get_partitions
-	format_partitions
-	mount_partitions
-}
-
-function root_part(){
-	if [ "$ROOT_PART" ]; then
-		root_part $ROOT_PART
-	else
-		echo -e "$ERROR - You didn't choose a root partition"
-		read -rep $'\n[\e[1;33mACTION\e[0m] - Choose the root partition(e.g /dev/sdx1): ' ROOT_PART
-	fi
-	echo -e "$NOTE - Formating ${1} as ext4..."
-	mkfs.ext4 $1
-	echo -e "$NOTE - Mounting $1 at /mnt"
-	mount $1 /mnt		
-}
-
-function boot_part(){
-	read -rep $'\n[\e[1;33mACTION\e[0m] - Choose the boot partition(e.g /dev/sdx1): ' BOOT_PART
-	[ "$BOOT_PART" ] && boot_part $BOOT_PART && sleep 1
-	echo -e "$NOTE - Formating ${1} as vfat..."
-	mkfs.fat -F32 $1
-	echo -e "$NOTE - Making the /boot/efi directory at /mnt"
-	[ ! -d  /mnt/boot/efi ] && mkdir -p /mnt/boot/efi
-	echo -e "$NOTE - Mounting $1 at /mnt/boot/efi"
-	mount $1 /mnt/boot/efi
-}
-
-function home_part(){
-	read -rep $'\n[\e[1;33mACTION\e[0m] - Choose the home partition (leave blank if none): ' HOME_PART
-	[ "$HOME_PART" ] && home_part $HOME_PART && sleep 1
-	read -rep $'[\e[1;33mACTION\e[0m] - Would you like to format the home partition? (y,n) ' FORMAT_HOME
-	if [[ $FORMAT_HOME =~ ^[Yy]$ ]]; then
-		echo -e "$NOTE - Formating ${1} to ext4..."
-		mkfs.ext4 $1
-		echo -e "$NOTE - Creating the home directory at /mnt/home"
-		[ ! -d /mnt/home ] && mkdir /mnt/home
-		echo -e "$NOTE - Mounting $1 at /mnt/home"
-		mount $1 /mnt/home
-	else
-		echo -e "$NOTE - Creating the home directory at /mnt/home"
-		[ ! -d /mnt/home ] && mkdir /mnt/home
-		echo -e "$NOTE - Mounting $1 at /mnt/home"
-		mount $1 /mnt/home
-	fi
-}
-
-function swap_part(){	
-	read -rep $'\n[\e[1;33mACTION\e[0m] - Choose the \e[0;34m\033[1mswap\e[0;37m partition (leave blank if none): ' SWAP_PART
-	[ "$SWAP_PART" ] && swap_part $SWAP_PART && sleep 1
-	echo -e "$NOTE - Formating ${1} as swap..."
-	mkswap $1
-	echo -e "$NOTE - Activating the swap partition..."
-	swapon $1
-}
-
 function notice() {
 	echo -e "$WARNING - This script don't have yet the ability to partitionned disk so you have to carry it yourself.\n\n"
 	sleep 1
@@ -102,7 +198,7 @@ function notice() {
 }
 
 function start_install() {
-	read -n -rep $'[\e[1;33mACTION\e[0m] - Would you like to start the installation of Arch Linux? (y,n) ' START_INSTALL
+	read -n1 -rep $'[\e[1;33mACTION\e[0m] - Would you like to start the installation of Arch Linux? (y,n) ' START_INSTALL
 
 	if [[ $START_INSTALL =~ ^[Yy]$ ]]; then
 		clear && sleep 1
@@ -117,59 +213,69 @@ function start_install() {
 
 function pacstrap() {
 	read -rep $'\n[\e[1;33mACTION\e[0m] - Shall we start with pacstrap? ' BASE_INSTALL
-	
+
+	pacman-key --init && pacman-key --populate
 	pacman -Sy archlinux-keyring --noconfirm
-	pacstrap -KP /mnt base base-devel linux linux-firmware git micro
+	pacstrap -KP /mnt base base-devel linux linux-firmware linux-headers git helix
 }
 
 function fstab() {
 	echo -ne "$NOTE - Now generating the ${y}fstab${w} file at /mnt/etc/fstab"
-	genfstab -U /mnt >> /mnt/etc/fstab
+	genfstab -U /mnt > /mnt/etc/fstab
 	cat /mnt/etc/fstab
 	sleep 1
 	echo -e "\r$OK - The ${y}fstab${w} file has been generated at /mnt/etc/fstab"
 }
 
 function launch_secondScript() {
-	echo -ne "$NOTE - Copying the second part of the script(${y}setup${w} at /mnt/root)"
-	cp 'setup' /mnt/root && chmod +x '/mnt/root/setup'
-	echo -e "\r$OK - The second part of the script(${y}setup${w} has been move to /mnt/root)"
+	echo -e "$NOTE - Now running the second part of the script.."
+	cp '2-chroot' /mnt/root/
+	cp '3-after-reboot' /mnt/root/
+	arch-chroot /mnt ./root/2-chroot
 }
 
 function chroot_mnt() {
-	read -rep $'\n[\e[1;33mACTION\e[0m] - Do you want to chroot to the fresh install? (y,n) ' CHROOT
+	read -rep $'\n[\e[1;33mACTION\e[0m] - Do you want to chroot to the fresh install? (y/n) ' CHROOT
 	sleep 1
 	[[ $CHROOT =~ ^[Yy]$ ]] && arch-chroot /mnt
 	echo -e "$NOTE - After ${y}chroot${w} to the fresh install at ${m}/mnt${w}, run '/root/setup' to complete the installation"
 }
 
-main() {
+function color_variables() {
 	r="\e[0;31m\033[1m"
 	b="\e[0;34m\033[1m"
 	g="\e[0;36m\033[1m"
 	m="\e[0;35m\033[1m"
 	y="\e[0;33m"
 	w="\e[0;37m"
+}
 
+function indicator_variables() {
 	NOTE="[\e[1;36mNOTE\e[0m]"
 	ATTENTION="[\e[1;37mATTENTION\e[0m]"
 	WARNING="[\e[1;35mWARNING\e[0m]"
 	OK="[\e[1;32mOK\e[0m]"
 	ERROR="[\e[1;31mERROR\e[0m]"
+	ATTEMPTS=0
+	INVALID_PART="$ERROR - Invalid partition, try again"
+	CHECK_PART="$ERROR - Please make sure that you already partitioned your disk"
 	ACTION="[\e[1;33mACTION\e[0m]"
-	install_log="install.log"
+	LOG="install.log"
+}
+
+main() {
+	# exit on error
 	set -e
-	
+	color_variables
+	indicator_variables
+	  
 	notice
 	start_install
-	disk_manager
+	manage_partitions
 	pacstrap
 	fstab
 	launch_secondScript
 	chroot_mnt
 }
 
-# main
-
-list_disks
-
+main
